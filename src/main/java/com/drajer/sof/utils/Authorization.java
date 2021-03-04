@@ -24,6 +24,8 @@ import org.springframework.web.client.RestTemplate;
 public class Authorization {
 
   @Autowired ClientDetailsService clientDetailService;
+  
+  @Autowired RestTemplate restTemplate;
 
   private final Logger logger = LoggerFactory.getLogger(Authorization.class);
 
@@ -31,7 +33,6 @@ public class Authorization {
     HttpHeaders headers = new HttpHeaders();
     headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
     HttpEntity<?> entity = new HttpEntity(headers);
-    RestTemplate restTemplate = new RestTemplate();
     ResponseEntity<String> response = null;
     JSONObject metadata = null;
     try {

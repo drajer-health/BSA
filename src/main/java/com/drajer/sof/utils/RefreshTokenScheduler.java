@@ -5,14 +5,26 @@ import com.drajer.sof.model.ClientDetails;
 import com.drajer.sof.model.LaunchDetails;
 import com.drajer.sof.model.Response;
 import com.drajer.sof.service.LaunchService;
+import io.jsonwebtoken.Jwts;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.spec.EncodedKeySpec;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -36,9 +48,19 @@ public class RefreshTokenScheduler {
 
   @Autowired FhirContextInitializer resourceData;
 
+  @Value("${privatekey.location}")
+  private String privateKeyLocation;
+
   private final Logger logger = LoggerFactory.getLogger(RefreshTokenScheduler.class);
 
   private static final String GRANT_TYPE = "grant_type";
+
+  private static final String CLIENT_ASSERTION_TYPE = "client_assertion_type";
+
+  private static final String CLIENT_ASSERTION_TYPE_VALUE =
+      "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+  private static final String CLIENT_ASSERTION = "client_assertion";
 
   public void scheduleJob(LaunchDetails authDetails) {
     logger.info("Scheduling Job to Get AccessToken");
@@ -170,6 +192,77 @@ public class RefreshTokenScheduler {
           "Error in Getting the AccessToken for the client: {} ", clientDetails.getClientId(), e);
     }
     return tokenResponse;
+  }
+
+  public JSONObject getBackendAppAccessToken(ClientDetails clientDetails) {
+    JSONObject tokenResponse = null;
+    logger.info("Getting AccessToken for Client: " + clientDetails.getClientId());
+    try {
+      HttpHeaders headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+      headers.add("Accept", MediaType.APPLICATION_JSON_VALUE);
+
+      MultiValueMap<String, String> map = new LinkedMultiValueMap<>();
+      map.add(GRANT_TYPE, "client_credentials");
+      map.add(CLIENT_ASSERTION_TYPE, CLIENT_ASSERTION_TYPE_VALUE);
+      map.add(CLIENT_ASSERTION, generateJWT(clientDetails));
+
+      HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(map, headers);
+
+      ResponseEntity<?> response =
+    		  restTemplate.exchange(
+              clientDetails.getTokenURL(), HttpMethod.POST, entity, Response.class);
+      tokenResponse = new JSONObject(response.getBody());
+      logger.info("Received AccessToken for Client: {}", clientDetails.getClientId());
+      logger.info("Received AccessToken: {}", tokenResponse);
+
+    } catch (Exception e) {
+      logger.error(
+          "Error in Getting the AccessToken for the client: {} ", clientDetails.getClientId(), e);
+    }
+    return tokenResponse;
+  }
+
+  private String generateJWT(ClientDetails clientDetails) {
+    PrivateKey privateKey;
+    String jwt = null;
+    try {
+      privateKey = getPrivateKey(privateKeyLocation);
+      Map<String, Object> headerMap = new HashMap<String, Object>();
+      headerMap.put("alg", "RS384");
+      headerMap.put("typ", "JWT");
+      jwt =
+          Jwts.builder()
+              .setSubject(clientDetails.getClientId())
+              .setIssuer(clientDetails.getClientId())
+              .setAudience(clientDetails.getTokenURL())
+              .setId(UUID.randomUUID().toString())
+              .setExpiration(new Date())
+              .setHeader(headerMap)
+              .signWith(privateKey)
+              .compact();
+      logger.info(jwt);
+    } catch (Exception e) {
+      // TODO Auto-generated catch block
+      e.printStackTrace();
+      logger.info("Error in Generating the JWT token");
+    }
+    return jwt;
+  }
+
+  public PrivateKey getPrivateKey(String filename) throws Exception {
+
+    logger.info("Reading Private Key from location::::: {}", filename);
+    File privateKeyFile = new File(filename);
+    DataInputStream dis = new DataInputStream(new FileInputStream(privateKeyFile));
+
+    byte[] keyBytes = new byte[(int) privateKeyFile.length()];
+    dis.read(keyBytes);
+    dis.close();
+
+    EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
+    KeyFactory kf = KeyFactory.getInstance("RSA");
+    return kf.generatePrivate(spec);
   }
   /*
     private void getResourcesData(LaunchDetails authDetails) {
